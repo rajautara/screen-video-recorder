@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using AForge.Video.FFMPEG;
+using FFMPEGVideoCodec = AForge.Video.FFMPEG.VideoCodec;
 using ScreenRecorder.Domain.Models;
 using Serilog;
 
@@ -358,25 +359,25 @@ namespace ScreenRecorder.Infrastructure.Recording
             }
         }
 
-        private VideoCodec GetVideoCodec(Domain.Models.VideoCodec codec)
+        private FFMPEGVideoCodec GetVideoCodec(Domain.Models.VideoCodec codec)
         {
             // Map our codec enum to AForge VideoCodec
             switch (codec)
             {
                 case Domain.Models.VideoCodec.H264:
-                    return VideoCodec.H264;
+                    return FFMPEGVideoCodec.H264;
 
                 case Domain.Models.VideoCodec.H265:
                     // H265 might not be supported, fallback to H264
                     _logger.Warning("H265 requested but may not be available, using H264");
-                    return VideoCodec.MPEG4;
+                    return FFMPEGVideoCodec.MPEG4;
 
                 case Domain.Models.VideoCodec.FFV1:
                     // FFV1 lossless codec
-                    return VideoCodec.Raw;
+                    return FFMPEGVideoCodec.Raw;
 
                 default:
-                    return VideoCodec.MPEG4; // Default to MPEG4
+                    return FFMPEGVideoCodec.MPEG4; // Default to MPEG4
             }
         }
 

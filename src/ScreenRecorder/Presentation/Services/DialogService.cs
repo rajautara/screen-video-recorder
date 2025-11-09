@@ -2,6 +2,7 @@ using System.Windows;
 using Microsoft.Win32;
 using System.Windows.Forms;
 using Serilog;
+using WinForms = System.Windows.Forms;
 
 namespace ScreenRecorder.Presentation.Services
 {
@@ -28,7 +29,7 @@ namespace ScreenRecorder.Presentation.Services
 
         public string ShowSaveFileDialog(string filter, string defaultFileName = null)
         {
-            var dialog = new SaveFileDialog
+            var dialog = new Microsoft.Win32.SaveFileDialog
             {
                 Filter = filter,
                 FileName = defaultFileName ?? string.Empty
@@ -44,7 +45,7 @@ namespace ScreenRecorder.Presentation.Services
 
         public string ShowOpenFileDialog(string filter)
         {
-            var dialog = new OpenFileDialog
+            var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Filter = filter
             };

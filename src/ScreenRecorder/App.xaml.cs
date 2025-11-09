@@ -85,8 +85,17 @@ namespace ScreenRecorder
             // Settings & Storage
             container.RegisterSingleton<ISettingsService, SettingsService>();
             container.RegisterSingleton<IStorageService, StorageService>();
+            
+            // Settings wrapper - need to implement AppSettingsAdapter
+            container.RegisterSingleton<IAppSettings>(() => 
+            {
+                var settingsService = container.GetInstance<ISettingsService>();
+                return new AppSettingsAdapter(settingsService);
+            });
 
             // Infrastructure Services
+            container.RegisterSingleton<Infrastructure.Services.IRegionSelectionService, Infrastructure.Services.RegionSelectionService>();
+            container.RegisterSingleton<Infrastructure.Services.IFileService, Infrastructure.Services.FileService>();
             container.RegisterSingleton<Infrastructure.Recording.IScreenCaptureService, Infrastructure.Recording.ScreenCaptureService>();
             container.RegisterSingleton<Infrastructure.Audio.IAudioDeviceService, Infrastructure.Audio.AudioDeviceService>();
             container.RegisterSingleton<Infrastructure.Hotkeys.IGlobalHotkeyService, Infrastructure.Hotkeys.GlobalHotkeyService>();
@@ -106,7 +115,7 @@ namespace ScreenRecorder
             container.Register<Presentation.ViewModels.MainViewModel>(Lifestyle.Singleton);
             container.Register<Presentation.ViewModels.SettingsViewModel>(Lifestyle.Transient);
             container.Register<Presentation.ViewModels.RegionPickerViewModel>(Lifestyle.Transient);
-            container.Register<Presentation.ViewModels.PostRecordViewModel>(Lifestyle.Transient);
+            // Note: PostRecordViewModel requires runtime parameters and should be created manually
         }
 
         private void SetupExceptionHandling()

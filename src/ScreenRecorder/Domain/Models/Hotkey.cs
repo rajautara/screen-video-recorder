@@ -54,7 +54,13 @@ namespace ScreenRecorder.Domain.Models
 
         public override int GetHashCode()
         {
-            return HashCode.Combine(Key, Modifiers);
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 23 + Key.GetHashCode();
+                hash = hash * 23 + Modifiers.GetHashCode();
+                return hash;
+            }
         }
     }
 }

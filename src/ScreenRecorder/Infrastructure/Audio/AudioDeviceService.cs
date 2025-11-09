@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
 using Serilog;
 
@@ -145,11 +146,11 @@ namespace ScreenRecorder.Infrastructure.Audio
             {
                 _logger.Error(ex, "Failed to get device level for {DeviceId}", deviceId);
             }
-
+            
             return 0f;
         }
 
-        private void OnDeviceChanged(object sender, DeviceNotificationEventArgs e)
+        private void OnDeviceChanged(object sender, EventArgs e)
         {
             _logger.Debug("Audio device list changed");
             DeviceListChanged?.Invoke(this, EventArgs.Empty);
@@ -157,7 +158,7 @@ namespace ScreenRecorder.Infrastructure.Audio
 
         private void OnDefaultDeviceChanged(object sender, DefaultDeviceChangedEventArgs e)
         {
-            _logger.Information("Default audio device changed: {Role} -> {DeviceId}", e.Role, e.DeviceId);
+            _logger.Debug("Default audio device changed");
             DeviceListChanged?.Invoke(this, EventArgs.Empty);
         }
 

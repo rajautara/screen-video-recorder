@@ -8,6 +8,7 @@ using AForge.Video.FFMPEG;
 using FFMPEGVideoCodec = AForge.Video.FFMPEG.VideoCodec;
 using ScreenRecorder.Domain.Models;
 using Serilog;
+using System.Diagnostics;
 
 namespace ScreenRecorder.Infrastructure.Recording
 {
@@ -72,19 +73,31 @@ namespace ScreenRecorder.Infrastructure.Recording
                 var bitRate = profile.OutputFormat.VideoBitrateMbps * 1000 * 1000;
 
                 // Initialize video writer
-                _videoWriter = new VideoFileWriter();
+                try
+                {
+                    _videoWriter = new VideoFileWriter();
 
-                // Determine codec
-                var codec = GetVideoCodec(profile.OutputFormat.VideoCodec);
+                    // Determine codec
+                    var codec = GetVideoCodec(profile.OutputFormat.VideoCodec);
 
-                // Open video file
-                _videoWriter.Open(
-                    session.TempFilePath,
-                    bounds.Width,
-                    bounds.Height,
-                    frameRate,
-                    codec,
-                    bitRate);
+                    // Open video file
+                    _videoWriter.Open(
+                        session.TempFilePath,
+                        bounds.Width,
+                        bounds.Height,
+                        frameRate,
+                        codec,
+                        bitRate);
+                }
+                catch (Exception videoEx)
+                {
+                    _logger.Error(videoEx, "Failed to initialize video writer");
+                    throw new InvalidOperationException(
+                        "Could not initialize video recording. This application requires FFMPEG libraries. " +
+                        "Please ensure AForge.Video.FFMPEG and its dependencies are properly installed. " +
+                        "Error: " + videoEx.Message,
+                        videoEx);
+                }
 
                 // Start recording thread
                 _cancellationTokenSource = new CancellationTokenSource();
@@ -231,7 +244,7 @@ namespace ScreenRecorder.Infrastructure.Recording
         private void RecordingLoop(Rectangle bounds, int frameRate, CancellationToken cancellationToken)
         {
             var frameInterval = TimeSpan.FromSeconds(1.0 / frameRate);
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();
             var frameCount = 0;
             var lastProgressUpdate = DateTime.Now;
 
@@ -362,19 +375,19 @@ namespace ScreenRecorder.Infrastructure.Recording
         private FFMPEGVideoCodec GetVideoCodec(Domain.Models.VideoCodec codec)
         {
             // Map our codec enum to AForge VideoCodec
+            // Note: AForge's FFMPEG wrapper has limited codec support
+            // We'll use MPEG4 as the default codec which is widely supported
             switch (codec)
             {
                 case Domain.Models.VideoCodec.H264:
-                    return FFMPEGVideoCodec.H264;
-
                 case Domain.Models.VideoCodec.H265:
-                    // H265 might not be supported, fallback to H264
-                    _logger.Warning("H265 requested but may not be available, using H264");
+                    // H264/H265 might not be directly available, use MPEG4 as fallback
+                    _logger.Information("Using MPEG4 codec");
                     return FFMPEGVideoCodec.MPEG4;
 
                 case Domain.Models.VideoCodec.FFV1:
-                    // FFV1 lossless codec
-                    return FFMPEGVideoCodec.Raw;
+                    // FFV1 lossless codec - use MPEG4 as fallback
+                    return FFMPEGVideoCodec.MPEG4;
 
                 default:
                     return FFMPEGVideoCodec.MPEG4; // Default to MPEG4

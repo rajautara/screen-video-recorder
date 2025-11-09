@@ -145,12 +145,13 @@ ScreenRecorder/
 - **Serilog** (3.1.1) - Logging framework
 - **Serilog.Sinks.File** (5.0.0) - File logging
 - **Newtonsoft.Json** (13.0.3) - JSON serialization
-- **SharpAvi** (3.1.0) - Screen recording engine (AVI/Motion-JPEG)
-- **Accord.Video.FFMPEG** (3.8.0) - Advanced video encoding
+- **AForge** (2.2.5) - Computer vision framework
+- **AForge.Video** (2.2.5) - Video processing library
+- **AForge.Video.FFMPEG** (2.2.5) - FFMPEG-based video encoding (H.264/MPEG4)
+- **Accord.Video.FFMPEG.x64** (3.8.0) - Advanced video encoding (x64)
 - **NAudio** (2.2.1) - Audio device management
-- **Squirrel.Windows** (2.0.1) - Auto-updates
 
-> **Note**: This implementation uses SharpAvi for screen capture with Motion-JPEG codec, which provides excellent quality without external dependencies. For H.264 encoding, you can optionally integrate FFmpeg or Media Foundation.
+> **Note**: This implementation uses AForge.Video.FFMPEG for high-quality video encoding with H.264/MPEG4 support. FFMPEG binaries are included with the AForge.Video.FFMPEG package, providing professional-grade video recording capabilities.
 
 ### System Requirements
 - Windows 10/11 (64-bit recommended)
@@ -332,11 +333,12 @@ This project is provided as-is for educational and commercial use.
 
 ## Acknowledgments
 
-- **SharpAvi** - Core screen recording engine
+- **AForge.NET** - Core screen recording and video processing framework
+- **FFMPEG** - Video encoding (via AForge.Video.FFMPEG wrapper)
 - **NAudio** - Audio device management
 - **Serilog** - Logging framework
 - **SimpleInjector** - Dependency injection
-- **Accord.NET** - Video encoding framework
+- **Accord.NET** - Advanced video encoding support
 
 ## Roadmap
 

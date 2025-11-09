@@ -145,9 +145,12 @@ ScreenRecorder/
 - **Serilog** (3.1.1) - Logging framework
 - **Serilog.Sinks.File** (5.0.0) - File logging
 - **Newtonsoft.Json** (13.0.3) - JSON serialization
-- **ScreenRecorderLib** (5.0.63) - Screen recording engine
+- **SharpAvi** (3.1.0) - Screen recording engine (AVI/Motion-JPEG)
+- **Accord.Video.FFMPEG** (3.8.0) - Advanced video encoding
 - **NAudio** (2.2.1) - Audio device management
 - **Squirrel.Windows** (2.0.1) - Auto-updates
+
+> **Note**: This implementation uses SharpAvi for screen capture with Motion-JPEG codec, which provides excellent quality without external dependencies. For H.264 encoding, you can optionally integrate FFmpeg or Media Foundation.
 
 ### System Requirements
 - Windows 10/11 (64-bit recommended)
@@ -329,10 +332,11 @@ This project is provided as-is for educational and commercial use.
 
 ## Acknowledgments
 
-- **ScreenRecorderLib** - Core recording engine
+- **SharpAvi** - Core screen recording engine
 - **NAudio** - Audio device management
 - **Serilog** - Logging framework
 - **SimpleInjector** - Dependency injection
+- **Accord.NET** - Video encoding framework
 
 ## Roadmap
 

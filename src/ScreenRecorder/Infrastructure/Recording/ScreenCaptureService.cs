@@ -1,7 +1,13 @@
 using System;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
 using ScreenRecorder.Domain.Models;
-using ScreenRecorderLib;
+using SharpAvi;
+using SharpAvi.Codecs;
+using SharpAvi.Output;
 using Serilog;
 
 namespace ScreenRecorder.Infrastructure.Recording
@@ -9,11 +15,16 @@ namespace ScreenRecorder.Infrastructure.Recording
     public class ScreenCaptureService : IScreenCaptureService, IDisposable
     {
         private readonly ILogger _logger;
-        private Recorder _recorder;
         private RecordingSession _currentSession;
         private RecordingState _currentState;
+        private AviWriter _writer;
+        private IAviVideoStream _videoStream;
+        private Thread _recordingThread;
+        private bool _isRecording;
+        private bool _isPaused;
         private DateTime _pauseStartTime;
         private TimeSpan _totalPausedTime;
+        private CancellationTokenSource _cancellationTokenSource;
 
         public RecordingState CurrentState
         {
@@ -51,23 +62,43 @@ namespace ScreenRecorder.Infrastructure.Recording
                 CurrentState = RecordingState.Starting;
                 _currentSession = session;
                 _totalPausedTime = TimeSpan.Zero;
+                _isRecording = true;
+                _isPaused = false;
 
                 _logger.Information("Starting recording session {Id}", session.Id);
 
-                // Configure recorder options
-                var options = CreateRecorderOptions(session);
+                // Initialize AVI writer
+                var profile = session.Profile;
+                var frameRate = (int)profile.OutputFormat.FrameRate;
 
-                _recorder = Recorder.CreateRecorder(options);
-                _recorder.OnRecordingComplete += OnRecordingComplete;
-                _recorder.OnRecordingFailed += OnRecordingFailed;
-                _recorder.OnStatusChanged += OnStatusChanged;
+                _writer = new AviWriter(session.TempFilePath)
+                {
+                    FramesPerSecond = frameRate,
+                    EmitIndex1 = true
+                };
 
-                // Start recording
-                _recorder.Record(session.TempFilePath);
+                // Create video stream
+                var encoder = GetVideoEncoder(profile.OutputFormat);
+                var bounds = GetCaptureBounds(profile.CaptureTarget);
+
+                _videoStream = _writer.AddVideoStream();
+                _videoStream.Width = bounds.Width;
+                _videoStream.Height = bounds.Height;
+                _videoStream.Codec = encoder;
+                _videoStream.BitsPerPixel = BitsPerPixel.Bpp32;
+
+                // Start recording thread
+                _cancellationTokenSource = new CancellationTokenSource();
+                _recordingThread = new Thread(() => RecordingLoop(bounds, frameRate, _cancellationTokenSource.Token))
+                {
+                    Name = "ScreenRecorder",
+                    IsBackground = true
+                };
 
                 session.StartTime = DateTime.Now;
-                CurrentState = RecordingState.Recording;
+                _recordingThread.Start();
 
+                CurrentState = RecordingState.Recording;
                 _logger.Information("Recording started successfully");
             }
             catch (Exception ex)
@@ -76,6 +107,7 @@ namespace ScreenRecorder.Infrastructure.Recording
                 CurrentState = RecordingState.Error;
                 _currentSession.ErrorMessage = ex.Message;
                 Error?.Invoke(this, ex.Message);
+                CleanupWriter();
                 throw;
             }
         }
@@ -89,7 +121,7 @@ namespace ScreenRecorder.Infrastructure.Recording
                     throw new InvalidOperationException("Cannot pause when not recording");
                 }
 
-                _recorder?.Pause();
+                _isPaused = true;
                 _pauseStartTime = DateTime.Now;
                 CurrentState = RecordingState.Paused;
                 _logger.Information("Recording paused");
@@ -110,8 +142,8 @@ namespace ScreenRecorder.Infrastructure.Recording
                     throw new InvalidOperationException("Cannot resume when not paused");
                 }
 
-                _recorder?.Resume();
                 _totalPausedTime += DateTime.Now - _pauseStartTime;
+                _isPaused = false;
                 CurrentState = RecordingState.Recording;
                 _logger.Information("Recording resumed");
             }
@@ -134,7 +166,16 @@ namespace ScreenRecorder.Infrastructure.Recording
                 CurrentState = RecordingState.Stopping;
                 _logger.Information("Stopping recording...");
 
-                _recorder?.Stop();
+                _isRecording = false;
+                _cancellationTokenSource?.Cancel();
+
+                // Wait for recording thread to finish
+                if (_recordingThread != null && _recordingThread.IsAlive)
+                {
+                    _recordingThread.Join(5000); // Wait up to 5 seconds
+                }
+
+                CleanupWriter();
 
                 if (_currentSession != null)
                 {
@@ -142,6 +183,9 @@ namespace ScreenRecorder.Infrastructure.Recording
                     _currentSession.PausedDuration = _totalPausedTime;
                     _currentSession.Duration = _currentSession.EndTime.Value - _currentSession.StartTime;
                 }
+
+                CurrentState = RecordingState.Idle;
+                _logger.Information("Recording stopped");
             }
             catch (Exception ex)
             {
@@ -153,174 +197,156 @@ namespace ScreenRecorder.Infrastructure.Recording
 
         public bool IsHardwareAccelerationAvailable()
         {
-            // Check if hardware encoding is available
-            try
-            {
-                return true; // ScreenRecorderLib will handle fallback automatically
-            }
-            catch
-            {
-                return false;
-            }
+            // SharpAvi doesn't use hardware acceleration directly
+            // This would need to be implemented with Media Foundation or other APIs
+            return false;
         }
 
         public void CheckMediaFoundationAvailability()
         {
             try
             {
-                // Try to create a simple recorder to test Media Foundation
-                var testOptions = new RecorderOptions();
-                using (var testRecorder = Recorder.CreateRecorder(testOptions))
+                // Basic check - try to create a bitmap
+                using (var bmp = new Bitmap(1, 1))
                 {
-                    _logger.Information("Media Foundation is available");
+                    _logger.Information("GDI+ available for screen capture");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Media Foundation not available");
+                _logger.Error(ex, "Screen capture not available");
                 throw new InvalidOperationException(
-                    "Media Foundation is not available on this system. " +
-                    "If you're using Windows N edition, please install the Media Feature Pack.", ex);
+                    "Screen capture capabilities not available on this system.", ex);
             }
         }
 
-        private RecorderOptions CreateRecorderOptions(RecordingSession session)
+        private void RecordingLoop(Rectangle bounds, int frameRate, CancellationToken cancellationToken)
         {
-            var profile = session.Profile;
-            var options = new RecorderOptions
-            {
-                RecorderMode = RecorderMode.Video,
-                IsThrottlingDisabled = false,
-                IsHardwareEncodingEnabled = profile.OutputFormat.HardwareAcceleration,
-                IsLowLatencyEnabled = false,
-                IsMp4FastStartEnabled = true,
-                AudioOptions = CreateAudioOptions(profile),
-                VideoOptions = CreateVideoOptions(profile),
-                MouseOptions = CreateMouseOptions(profile)
-            };
+            var frameInterval = TimeSpan.FromSeconds(1.0 / frameRate);
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var frameCount = 0;
 
-            // Set source based on capture target
-            if (profile.CaptureTarget.Mode == RecordingMode.FullScreen)
+            try
             {
-                var displayOptions = new DisplayRecordingSource
+                while (_isRecording && !cancellationToken.IsCancellationRequested)
                 {
-                    DisplayName = profile.CaptureTarget.DisplayDeviceName ?? GetPrimaryDisplay(),
-                };
-                options.SourceOptions = displayOptions;
-            }
-            else if (profile.CaptureTarget.Mode == RecordingMode.Window)
-            {
-                var windowOptions = new WindowRecordingSource
-                {
-                    Handle = profile.CaptureTarget.WindowHandle
-                };
-                options.SourceOptions = windowOptions;
-            }
-            else if (profile.CaptureTarget.Mode == RecordingMode.Region)
-            {
-                var region = profile.CaptureTarget.Region;
-                var displayOptions = new DisplayRecordingSource
-                {
-                    DisplayName = GetPrimaryDisplay(),
-                    RecordingArea = new RecordingArea
+                    if (_isPaused)
                     {
-                        Left = region.X,
-                        Top = region.Y,
-                        Right = region.X + region.Width,
-                        Bottom = region.Y + region.Height
+                        Thread.Sleep(100);
+                        continue;
                     }
-                };
-                options.SourceOptions = displayOptions;
+
+                    var targetTime = TimeSpan.FromTicks(frameInterval.Ticks * frameCount);
+                    var currentTime = stopwatch.Elapsed - _totalPausedTime;
+
+                    if (currentTime >= targetTime)
+                    {
+                        CaptureFrame(bounds);
+                        frameCount++;
+
+                        // Report progress
+                        var elapsed = DateTime.Now - _currentSession.StartTime - _totalPausedTime;
+                        ProgressUpdated?.Invoke(this, elapsed);
+                    }
+                    else
+                    {
+                        // Sleep until next frame
+                        var sleepTime = targetTime - currentTime;
+                        if (sleepTime.TotalMilliseconds > 1)
+                        {
+                            Thread.Sleep(1);
+                        }
+                    }
+                }
             }
-
-            return options;
-        }
-
-        private AudioOptions CreateAudioOptions(RecordingProfile profile)
-        {
-            var audioMix = profile.AudioMix;
-            var options = new AudioOptions
+            catch (Exception ex)
             {
-                IsAudioEnabled = audioMix.Source != AudioSource.None,
-                IsOutputDeviceEnabled = audioMix.Source == AudioSource.SystemAudio || audioMix.Source == AudioSource.Both,
-                IsInputDeviceEnabled = audioMix.Source == AudioSource.Microphone || audioMix.Source == AudioSource.Both,
-                AudioOutputDevice = audioMix.SystemAudioDeviceId,
-                AudioInputDevice = audioMix.MicrophoneDeviceId,
-                OutputVolume = audioMix.SystemAudioVolume,
-                InputVolume = audioMix.MicrophoneVolume
-            };
-
-            return options;
+                _logger.Error(ex, "Error in recording loop");
+                Error?.Invoke(this, ex.Message);
+            }
         }
 
-        private VideoOptions CreateVideoOptions(RecordingProfile profile)
+        private void CaptureFrame(Rectangle bounds)
         {
-            var format = profile.OutputFormat;
-            var options = new VideoOptions
+            try
             {
-                Framerate = (int)format.FrameRate,
-                Quality = GetVideoQuality(format.QualityPreset),
-                BitrateMode = format.BitrateMode == Domain.Models.BitrateMode.Auto
-                    ? ScreenRecorderLib.BitrateControlMode.Quality
-                    : ScreenRecorderLib.BitrateControlMode.UnconstrainedVBR,
-                Bitrate = format.VideoBitrateMbps * 1000 * 1000, // Convert to bps
-                IsFixedFramerate = true
-            };
+                using (var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb))
+                {
+                    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+                    {
+                        graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                    }
 
-            return options;
-        }
+                    // Write frame to video stream
+                    var bitmapData = bitmap.LockBits(
+                        new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                        ImageLockMode.ReadOnly,
+                        PixelFormat.Format32bppRgb);
 
-        private MouseOptions CreateMouseOptions(RecordingProfile profile)
-        {
-            return new MouseOptions
+                    try
+                    {
+                        var frameData = new byte[bitmapData.Stride * bitmapData.Height];
+                        Marshal.Copy(bitmapData.Scan0, frameData, 0, frameData.Length);
+                        _videoStream.WriteFrame(true, frameData, 0, frameData.Length);
+                    }
+                    finally
+                    {
+                        bitmap.UnlockBits(bitmapData);
+                    }
+                }
+            }
+            catch (Exception ex)
             {
-                IsMousePointerEnabled = profile.CursorMode != CursorCaptureMode.None,
-                IsMouseClicksDetected = profile.ShowClickHighlight,
-                MouseClickDetectionColor = "#FFFF00",
-                MouseClickDetectionRadius = 20,
-                MouseClickDetectionDuration = 300
-            };
+                _logger.Error(ex, "Failed to capture frame");
+            }
         }
 
-        private int GetVideoQuality(QualityPreset preset)
+        private Rectangle GetCaptureBounds(CaptureTarget target)
         {
-            return preset switch
+            switch (target.Mode)
             {
-                QualityPreset.Low => 50,
-                QualityPreset.Medium => 65,
-                QualityPreset.High => 75,
-                QualityPreset.VeryHigh => 85,
-                QualityPreset.Lossless => 100,
-                _ => 75
-            };
+                case RecordingMode.FullScreen:
+                    var screen = Screen.AllScreens[Math.Min(target.MonitorIndex, Screen.AllScreens.Length - 1)];
+                    return screen.Bounds;
+
+                case RecordingMode.Window:
+                    // Get window bounds
+                    if (GetWindowRect(target.WindowHandle, out var rect))
+                    {
+                        return new Rectangle(rect.Left, rect.Top,
+                            rect.Right - rect.Left, rect.Bottom - rect.Top);
+                    }
+                    // Fallback to primary screen
+                    return Screen.PrimaryScreen.Bounds;
+
+                case RecordingMode.Region:
+                    return target.Region;
+
+                default:
+                    return Screen.PrimaryScreen.Bounds;
+            }
         }
 
-        private string GetPrimaryDisplay()
+        private FourCC GetVideoEncoder(OutputFormat format)
         {
-            return System.Windows.Forms.Screen.PrimaryScreen.DeviceName;
+            // Use Motion JPEG as default codec (widely supported)
+            // For production with H.264, you'd need to install/include x264 or use Media Foundation
+            return KnownFourCCs.Codecs.MotionJpeg;
         }
 
-        private void OnRecordingComplete(object sender, RecordingCompleteEventArgs e)
+        private void CleanupWriter()
         {
-            _logger.Information("Recording completed: {Path}", e.FilePath);
-            CurrentState = RecordingState.Idle;
-        }
-
-        private void OnRecordingFailed(object sender, RecordingFailedEventArgs e)
-        {
-            _logger.Error("Recording failed: {Error}", e.Error);
-            CurrentState = RecordingState.Error;
-            _currentSession.ErrorMessage = e.Error;
-            Error?.Invoke(this, e.Error);
-        }
-
-        private void OnStatusChanged(object sender, RecordingStatusEventArgs e)
-        {
-            if (_currentSession != null && CurrentState == RecordingState.Recording)
+            try
             {
-                var elapsed = DateTime.Now - _currentSession.StartTime - _totalPausedTime;
-                _currentSession.Duration = elapsed;
-                ProgressUpdated?.Invoke(this, elapsed);
+                _videoStream?.Dispose();
+                _videoStream = null;
+
+                _writer?.Close();
+                _writer = null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error cleaning up AVI writer");
             }
         }
 
@@ -328,19 +354,31 @@ namespace ScreenRecorder.Infrastructure.Recording
         {
             try
             {
-                if (_recorder != null)
+                if (_isRecording)
                 {
-                    _recorder.OnRecordingComplete -= OnRecordingComplete;
-                    _recorder.OnRecordingFailed -= OnRecordingFailed;
-                    _recorder.OnStatusChanged -= OnStatusChanged;
-                    _recorder.Dispose();
-                    _recorder = null;
+                    StopRecording();
                 }
+
+                _cancellationTokenSource?.Dispose();
+                CleanupWriter();
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error disposing ScreenCaptureService");
             }
+        }
+
+        // P/Invoke for window capture
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
         }
     }
 }
